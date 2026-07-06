@@ -1,0 +1,10 @@
+# Soccer Simulation Tool
+
+This project is a Vite + React + TypeScript app for a soccer simulation system.
+
+We will build:
+- interactive soccer field (115x74 yards)
+- click-to-pass system
+- ball physics simulation
+- timing rings
+- tactical zone overlays
