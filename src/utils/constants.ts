@@ -1,0 +1,19 @@
+export const FIELD_W = 115;
+export const FIELD_H = 74;
+
+export const SIDE_PANEL_WIDTH = 460;
+export const TOP_BAR_HEIGHT = 88;
+
+export const MPH_TO_YARDS_PER_SECOND = 1760 / 3600;
+
+export const DEFAULT_DEFENDER_SPEED_YARDS_PER_SECOND = 5.5;
+export const DEFAULT_DEFENDER_REACTION_TIME = 0.35;
+export const MIN_DEFAULT_MARKING_DISTANCE = 4.0;
+export const MAX_DEFAULT_MARKING_DISTANCE = 14.0;
+export const DISTANCE_TO_SPACING_FACTOR = 0.065;
+export const LONG_RANGE_SPACING_FACTOR = 0.17;
+export const LONG_RANGE_START_YARDS = 40;
+
+export const SPEED_RANGE_BUFFER_MIN_MPH = 4;
+export const SPEED_RANGE_BUFFER_MAX_MPH = 8;
+export const SPEED_RANGE_BUFFER_RATIO = 0.5;
