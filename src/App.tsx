@@ -3,7 +3,12 @@ import { ControlsBar } from "./components/ControlsBar";
 import { FieldCanvas } from "./components/FieldCanvas";
 import { InfoPanel } from "./components/InfoPanel";
 import { DEFAULT_PLAYERS } from "./data/defaultPlayers";
-import type { PassCalculation, PassIntentMode, Player } from "./types";
+import type {
+  AttackingDirection,
+  PassCalculation,
+  PassIntentMode,
+  Player
+} from "./types";
 
 function cloneDefaultPlayers(): Player[] {
   return DEFAULT_PLAYERS.map((player) => ({ ...player }));
@@ -16,10 +21,16 @@ export default function App() {
   const [passIntentMode, setPassIntentMode] =
     useState<PassIntentMode>("open");
 
+  const [attackingDirection, setAttackingDirection] =
+    useState<AttackingDirection>("ltr");
+
   const [players, setPlayers] = useState<Player[]>(cloneDefaultPlayers);
 
   const [ballSpeed, setBallSpeed] = useState(25);
   const [launchElevation, setLaunchElevation] = useState(15);
+
+  const [attackerRunSpeed, setAttackerRunSpeed] = useState(6.3);
+  const [defenderSpeed, setDefenderSpeed] = useState(5.5);
 
   const [hoverInfo, setHoverInfo] = useState<PassCalculation | null>(null);
   const [resetKey, setResetKey] = useState(0);
@@ -48,10 +59,16 @@ export default function App() {
         setShowPlayers={setShowPlayers}
         passIntentMode={passIntentMode}
         setPassIntentMode={setPassIntentMode}
+        attackingDirection={attackingDirection}
+        setAttackingDirection={setAttackingDirection}
         ballSpeed={ballSpeed}
         setBallSpeed={setBallSpeed}
         launchElevation={launchElevation}
         setLaunchElevation={setLaunchElevation}
+        attackerRunSpeed={attackerRunSpeed}
+        setAttackerRunSpeed={setAttackerRunSpeed}
+        defenderSpeed={defenderSpeed}
+        setDefenderSpeed={setDefenderSpeed}
         onReset={handleReset}
       />
 
@@ -61,6 +78,9 @@ export default function App() {
         showZones={showZones}
         showPlayers={showPlayers}
         passIntentMode={passIntentMode}
+        attackingDirection={attackingDirection}
+        attackerRunSpeed={attackerRunSpeed}
+        defenderSpeed={defenderSpeed}
         players={players}
         setPlayers={setPlayers}
         resetKey={resetKey}

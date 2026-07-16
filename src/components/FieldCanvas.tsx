@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type {
+  AttackingDirection,
   PassCalculation,
   PassIntentMode,
   Player,
@@ -8,7 +9,6 @@ import type {
 } from "../types";
 import {
   DEFAULT_DEFENDER_REACTION_TIME,
-  DEFAULT_DEFENDER_SPEED_YARDS_PER_SECOND,
   FIELD_H,
   FIELD_W,
   SIDE_PANEL_WIDTH,
@@ -29,6 +29,9 @@ type FieldCanvasProps = {
   showZones: boolean;
   showPlayers: boolean;
   passIntentMode: PassIntentMode;
+  attackingDirection: AttackingDirection;
+  attackerRunSpeed: number;
+  defenderSpeed: number;
   players: Player[];
   setPlayers: Dispatch<SetStateAction<Player[]>>;
   resetKey: number;
@@ -40,6 +43,9 @@ type DraggingPlayer = {
   id: string;
   offsetX: number;
   offsetY: number;
+  startX: number;
+  startY: number;
+  moved: boolean;
 };
 
 type DefenderPressureContext = {
@@ -56,8 +62,21 @@ type TargetContext = {
   pressureContext: DefenderPressureContext | null;
 };
 
-const DEFAULT_ATTACKER_RUN_SPEED_YARDS_PER_SECOND = 6.3;
+type BestThroughBallContext = {
+  targetCanvasPoint: Point;
+  calculation: PassCalculation;
+};
+
 const DEFAULT_ATTACKER_REACTION_TIME = 0.2;
+
+const BEST_THROUGH_SEARCH_RADIUS_YARDS = 16;
+const BEST_THROUGH_SEARCH_STEP_YARDS = 4;
+const BEST_THROUGH_MIN_IMPROVEMENT_SECONDS = 0.15;
+
+const MIN_THROUGH_FORWARD_RUN_YARDS = 2;
+const MIN_THROUGH_FORWARD_FROM_BALL_YARDS = 4;
+const MAX_THROUGH_LATERAL_RUN_RATIO = 2.5;
+const INVALID_THROUGH_BALL_PENALTY_SECONDS = 1.0;
 
 export function FieldCanvas({
   ballSpeed,
@@ -65,6 +84,9 @@ export function FieldCanvas({
   showZones,
   showPlayers,
   passIntentMode,
+  attackingDirection,
+  attackerRunSpeed,
+  defenderSpeed,
   players,
   setPlayers,
   resetKey,
@@ -77,7 +99,9 @@ export function FieldCanvas({
   const originRef = useRef<Point | null>(null);
   const previousOriginRef = useRef<Point | null>(null);
   const hoverRef = useRef<Point | null>(null);
+  const lockedHoverRef = useRef<Point | null>(null);
 
+  const selectedRunnerIdRef = useRef<string | null>(null);
   const draggingPlayerRef = useRef<DraggingPlayer | null>(null);
   const suppressNextClickRef = useRef(false);
 
@@ -89,6 +113,10 @@ export function FieldCanvas({
   const showZonesRef = useRef(showZones);
   const showPlayersRef = useRef(showPlayers);
   const passIntentModeRef = useRef<PassIntentMode>(passIntentMode);
+  const attackingDirectionRef =
+    useRef<AttackingDirection>(attackingDirection);
+  const attackerRunSpeedRef = useRef(attackerRunSpeed);
+  const defenderSpeedRef = useRef(defenderSpeed);
   const playersRef = useRef<Player[]>(players);
 
   function getScale(canvas: HTMLCanvasElement) {
@@ -139,6 +167,11 @@ export function FieldCanvas({
     return pixelsToYards(distPx, canvas);
   }
 
+  function getPlayerById(id: string | null) {
+    if (!id) return null;
+    return playersRef.current.find((player) => player.id === id) ?? null;
+  }
+
   function getPlayerCanvasPoint(
     player: Player,
     canvas: HTMLCanvasElement
@@ -186,6 +219,38 @@ export function FieldCanvas({
     };
   }
 
+  function getDirectionAwareModifier(
+    origin: Point,
+    target: Point,
+    canvas: HTMLCanvasElement
+  ) {
+    if (attackingDirectionRef.current === "ltr") {
+      return getDirectionalTimeModifier(
+        origin,
+        target,
+        canvas.width,
+        canvas.height
+      );
+    }
+
+    const mirroredOrigin = {
+      x: canvas.width - origin.x,
+      y: origin.y
+    };
+
+    const mirroredTarget = {
+      x: canvas.width - target.x,
+      y: target.y
+    };
+
+    return getDirectionalTimeModifier(
+      mirroredOrigin,
+      mirroredTarget,
+      canvas.width,
+      canvas.height
+    );
+  }
+
   function getDefenderPressureContextForCanvasPoint(
     receiverCanvasPoint: Point,
     canvas: HTMLCanvasElement
@@ -211,7 +276,7 @@ export function FieldCanvas({
       defenderSpacingYards,
       defenderCloseDownTime:
         DEFAULT_DEFENDER_REACTION_TIME +
-        defenderSpacingYards / DEFAULT_DEFENDER_SPEED_YARDS_PER_SECOND
+        defenderSpacingYards / defenderSpeedRef.current
     };
   }
 
@@ -225,6 +290,29 @@ export function FieldCanvas({
         receiverPlayer: null,
         receiverPlayerCanvasPoint: null,
         pressureContext: null
+      };
+    }
+
+    const selectedRunner = getPlayerById(selectedRunnerIdRef.current);
+
+    if (
+      passIntentModeRef.current === "through" &&
+      selectedRunner &&
+      selectedRunner.team === "attacker"
+    ) {
+      const selectedRunnerCanvasPoint = getPlayerCanvasPoint(
+        selectedRunner,
+        canvas
+      );
+
+      return {
+        targetCanvasPoint: hoverPoint,
+        receiverPlayer: selectedRunner,
+        receiverPlayerCanvasPoint: selectedRunnerCanvasPoint,
+        pressureContext: getDefenderPressureContextForCanvasPoint(
+          hoverPoint,
+          canvas
+        )
       };
     }
 
@@ -269,6 +357,65 @@ export function FieldCanvas({
     };
   }
 
+  function getThroughBallValidity(
+    origin: Point,
+    runnerCanvasPoint: Point,
+    targetCanvasPoint: Point,
+    canvas: HTMLCanvasElement
+  ) {
+    const originYardPoint = canvasPointToYardPoint(origin, canvas);
+    const runnerYardPoint = canvasPointToYardPoint(
+      runnerCanvasPoint,
+      canvas
+    );
+    const targetYardPoint = canvasPointToYardPoint(
+      targetCanvasPoint,
+      canvas
+    );
+
+    const directionMultiplier =
+      attackingDirectionRef.current === "ltr" ? 1 : -1;
+
+    const runForwardYards =
+      (targetYardPoint.x - runnerYardPoint.x) * directionMultiplier;
+
+    const ballForwardYards =
+      (targetYardPoint.x - originYardPoint.x) * directionMultiplier;
+
+    const lateralRunYards = Math.abs(
+      targetYardPoint.y - runnerYardPoint.y
+    );
+
+    if (runForwardYards < MIN_THROUGH_FORWARD_RUN_YARDS) {
+      return {
+        valid: false,
+        reason: "Target is not ahead of the runner"
+      };
+    }
+
+    if (ballForwardYards < MIN_THROUGH_FORWARD_FROM_BALL_YARDS) {
+      return {
+        valid: false,
+        reason: "Target is not forward enough from the ball"
+      };
+    }
+
+    if (
+      lateralRunYards >
+      Math.max(10, runForwardYards * MAX_THROUGH_LATERAL_RUN_RATIO)
+    ) {
+      return {
+        valid: false,
+        reason: "Run is too lateral for a true through ball"
+      };
+    }
+
+    return {
+      valid: true,
+      reason: "Forward space for runner"
+    };
+  }
+
   function findPlayerAtCanvasPoint(point: Point): Player | null {
     const canvas = canvasRef.current;
     if (!canvas || !showPlayersRef.current) return null;
@@ -306,11 +453,10 @@ export function FieldCanvas({
 
     const distance = getDistanceYards(origin, target, canvas);
 
-    const directionalModifier = getDirectionalTimeModifier(
+    const directionalModifier = getDirectionAwareModifier(
       origin,
       target,
-      canvas.width,
-      canvas.height
+      canvas
     );
 
     const baseCalc = calculatePassModel(
@@ -346,17 +492,28 @@ export function FieldCanvas({
 
     const runnerTimeToTarget =
       DEFAULT_ATTACKER_REACTION_TIME +
-      runnerDistanceYards / DEFAULT_ATTACKER_RUN_SPEED_YARDS_PER_SECOND;
+      runnerDistanceYards / attackerRunSpeedRef.current;
 
     const earliestUsefulArrivalTime = Math.max(
       baseCalc.ballTravelTime,
       runnerTimeToTarget
     );
 
-    const throughBallWindow =
+    const rawThroughBallWindow =
       baseCalc.defenderCloseDownTime -
       earliestUsefulArrivalTime +
       directionalModifier;
+
+    const validity = getThroughBallValidity(
+      origin,
+      targetContext.receiverPlayerCanvasPoint,
+      target,
+      canvas
+    );
+
+    const throughBallWindow = validity.valid
+      ? rawThroughBallWindow
+      : rawThroughBallWindow - INVALID_THROUGH_BALL_PENALTY_SECONDS;
 
     const runnerAdvantageVsDefender =
       baseCalc.defenderCloseDownTime - runnerTimeToTarget;
@@ -367,15 +524,111 @@ export function FieldCanvas({
       runnerDistanceYards,
       runnerTimeToTarget,
       runnerAdvantageVsDefender,
-      throughBallWindow
+      throughBallWindow,
+      throughBallValid: validity.valid,
+      throughBallReason: validity.reason
     };
+  }
+
+  function getBestThroughBallContext(
+    hoverPoint: Point,
+    canvas: HTMLCanvasElement
+  ): BestThroughBallContext | null {
+    const origin = originRef.current;
+
+    if (
+      !origin ||
+      passIntentModeRef.current !== "through" ||
+      !showPlayersRef.current
+    ) {
+      return null;
+    }
+
+    const hoverCalc = calculateHoverPass(hoverPoint);
+    if (!hoverCalc) return null;
+
+    const radiusPx = yardsToPixels(BEST_THROUGH_SEARCH_RADIUS_YARDS, canvas);
+    const stepPx = yardsToPixels(BEST_THROUGH_SEARCH_STEP_YARDS, canvas);
+
+    let best: BestThroughBallContext | null = null;
+    let bestScore = -Infinity;
+
+    for (let dx = -radiusPx; dx <= radiusPx; dx += stepPx) {
+      for (let dy = -radiusPx; dy <= radiusPx; dy += stepPx) {
+        const distanceFromHoverPx = Math.sqrt(dx * dx + dy * dy);
+        if (distanceFromHoverPx > radiusPx) continue;
+
+        const candidateTarget: Point = {
+          x: clamp(hoverPoint.x + dx, 0, canvas.width),
+          y: clamp(hoverPoint.y + dy, 0, canvas.height)
+        };
+
+        const candidateContext = getTargetContextFromCanvasPoint(
+          candidateTarget,
+          canvas
+        );
+
+        if (
+          !candidateContext.receiverPlayerCanvasPoint ||
+          !candidateContext.pressureContext
+        ) {
+          continue;
+        }
+
+        const validity = getThroughBallValidity(
+          origin,
+          candidateContext.receiverPlayerCanvasPoint,
+          candidateTarget,
+          canvas
+        );
+
+        if (!validity.valid) {
+          continue;
+        }
+
+        const candidateCalc = calculateHoverPass(candidateTarget);
+
+        if (
+          !candidateCalc ||
+          candidateCalc.throughBallWindow === undefined
+        ) {
+          continue;
+        }
+
+        const candidateDistancePenalty =
+          pixelsToYards(distanceFromHoverPx, canvas) * 0.015;
+
+        const candidateScore =
+          candidateCalc.throughBallWindow - candidateDistancePenalty;
+
+        if (candidateScore > bestScore) {
+          bestScore = candidateScore;
+
+          best = {
+            targetCanvasPoint: candidateTarget,
+            calculation: candidateCalc
+          };
+        }
+      }
+    }
+
+    if (!best) return null;
+
+    const improvement =
+      best.calculation.receiverTimeOnBall - hoverCalc.receiverTimeOnBall;
+
+    if (improvement < BEST_THROUGH_MIN_IMPROVEMENT_SECONDS) {
+      return null;
+    }
+
+    return best;
   }
 
   function updateHoverInfo(
     speed = speedRef.current,
     launch = launchRef.current
   ) {
-    const hover = hoverRef.current;
+    const hover = lockedHoverRef.current ?? hoverRef.current;
 
     if (!hover) {
       setHoverInfo(null);
@@ -413,16 +666,44 @@ export function FieldCanvas({
   }, [launchElevation]);
 
   useEffect(() => {
+    attackerRunSpeedRef.current = attackerRunSpeed;
+    updateHoverInfo();
+  }, [attackerRunSpeed]);
+
+  useEffect(() => {
+    defenderSpeedRef.current = defenderSpeed;
+    updateHoverInfo();
+  }, [defenderSpeed]);
+
+  useEffect(() => {
+    attackingDirectionRef.current = attackingDirection;
+    lockedHoverRef.current = null;
+    updateHoverInfo();
+  }, [attackingDirection]);
+
+  useEffect(() => {
     showZonesRef.current = showZones;
   }, [showZones]);
 
   useEffect(() => {
     showPlayersRef.current = showPlayers;
+
+    if (!showPlayers) {
+      selectedRunnerIdRef.current = null;
+      lockedHoverRef.current = null;
+    }
+
     updateHoverInfo();
   }, [showPlayers]);
 
   useEffect(() => {
     passIntentModeRef.current = passIntentMode;
+
+    if (passIntentMode !== "through") {
+      selectedRunnerIdRef.current = null;
+      lockedHoverRef.current = null;
+    }
+
     updateHoverInfo();
   }, [passIntentMode]);
 
@@ -430,12 +711,30 @@ export function FieldCanvas({
     originRef.current = null;
     previousOriginRef.current = null;
     hoverRef.current = null;
+    lockedHoverRef.current = null;
+    selectedRunnerIdRef.current = null;
     draggingPlayerRef.current = null;
     suppressNextClickRef.current = false;
 
     setHasOrigin(false);
     setHoverInfo(null);
   }, [resetKey]);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+
+      selectedRunnerIdRef.current = null;
+      lockedHoverRef.current = null;
+      updateHoverInfo();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -538,6 +837,19 @@ export function FieldCanvas({
       ctx.beginPath();
       ctx.arc(w, h, cornerR, Math.PI, Math.PI * 1.5);
       ctx.stroke();
+
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.68)";
+      ctx.font = "bold 12px Arial";
+      ctx.textAlign = "center";
+
+      if (attackingDirectionRef.current === "ltr") {
+        ctx.fillText("ATTACK →", w / 2, 18);
+      } else {
+        ctx.fillText("← ATTACK", w / 2, 18);
+      }
+
+      ctx.restore();
     }
 
     function drawZoneOverlay() {
@@ -634,7 +946,7 @@ export function FieldCanvas({
 
       ctx.save();
 
-      const hover = hoverRef.current;
+      const hover = lockedHoverRef.current ?? hoverRef.current;
       const targetContext = hover
         ? getTargetContextFromCanvasPoint(hover, canvas)
         : null;
@@ -645,15 +957,20 @@ export function FieldCanvas({
         const isAttacker = player.team === "attacker";
         const isReceiver =
           targetContext?.receiverPlayer?.id === player.id;
+        const isSelectedRunner =
+          selectedRunnerIdRef.current === player.id;
 
         const fill = isAttacker ? "#38bdf8" : "#fb7185";
-        const stroke = isReceiver
+
+        const stroke = isSelectedRunner
+          ? "#facc15"
+          : isReceiver
           ? "#fef08a"
           : isAttacker
           ? "#dff6ff"
           : "#ffe4e6";
 
-        const radius = isReceiver ? 12 : 10;
+        const radius = isSelectedRunner ? 13 : isReceiver ? 12 : 10;
 
         ctx.beginPath();
         ctx.arc(point.x + 2, point.y + 2, radius, 0, Math.PI * 2);
@@ -665,7 +982,7 @@ export function FieldCanvas({
         ctx.fillStyle = fill;
         ctx.fill();
 
-        ctx.lineWidth = isReceiver ? 3 : 2;
+        ctx.lineWidth = isSelectedRunner ? 4 : isReceiver ? 3 : 2;
         ctx.strokeStyle = stroke;
         ctx.stroke();
 
@@ -674,6 +991,10 @@ export function FieldCanvas({
         ctx.textBaseline = "middle";
         ctx.fillStyle = "#111";
         ctx.fillText(player.label, point.x, point.y);
+
+        if (isSelectedRunner) {
+          drawLabel("Selected Runner", point.x, point.y - 18, "#fde68a");
+        }
       }
 
       ctx.restore();
@@ -686,11 +1007,10 @@ export function FieldCanvas({
     ) {
       if (!pointInsideField(target.x, target.y)) return;
 
-      const directionalModifier = getDirectionalTimeModifier(
+      const directionalModifier = getDirectionAwareModifier(
         origin,
         target,
-        canvas.width,
-        canvas.height
+        canvas
       );
 
       const pressureContext = getDefenderPressureContextForCanvasPoint(
@@ -823,7 +1143,8 @@ export function FieldCanvas({
 
     function drawHoverPreview() {
       const origin = originRef.current;
-      const hover = hoverRef.current;
+      const hover = lockedHoverRef.current ?? hoverRef.current;
+      const isLocked = lockedHoverRef.current !== null;
 
       if (!origin || !hover) return;
 
@@ -888,21 +1209,87 @@ export function FieldCanvas({
 
       const label =
         passIntentModeRef.current === "through"
-          ? `Window: ${formatSignedTime(calc.receiverTimeOnBall)}`
+          ? calc.throughBallValid === false
+            ? "Not a forward through ball"
+            : `Window: ${formatSignedTime(calc.receiverTimeOnBall)}`
           : `Receiver: ${formatSignedTime(calc.receiverTimeOnBall)}`;
 
-      drawLabel(label, midX, midY - 10, colors.text);
+      drawLabel(
+        label,
+        midX,
+        midY - 10,
+        calc.throughBallValid === false ? "#fca5a5" : colors.text
+      );
 
       if (passIntentModeRef.current === "through") {
-        drawLabel("Through Space", target.x, target.y - 16, "#dbeafe");
+        drawLabel(
+          isLocked ? "Locked Through Space" : "Through Space",
+          target.x,
+          target.y - 16,
+          isLocked ? "#fde68a" : "#dbeafe"
+        );
 
-        if (calc.runnerTimeToTarget !== undefined) {
+        if (isLocked) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(250, 204, 21, 0.95)";
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(target.x, target.y, 14, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        if (calc.throughBallValid === false && calc.throughBallReason) {
+          drawLabel(
+            calc.throughBallReason,
+            target.x,
+            target.y + 18,
+            "#fca5a5"
+          );
+        } else if (calc.runnerTimeToTarget !== undefined) {
           drawLabel(
             `Runner: ${calc.runnerTimeToTarget.toFixed(1)}s`,
             target.x,
             target.y + 18,
             "#bfdbfe"
           );
+        }
+
+        if (!isLocked) {
+          const bestThroughBall = getBestThroughBallContext(hover, canvas);
+
+          if (bestThroughBall) {
+            const bestTarget = bestThroughBall.targetCanvasPoint;
+            const bestCalc = bestThroughBall.calculation;
+
+            ctx.save();
+
+            ctx.strokeStyle = "rgba(250, 204, 21, 0.95)";
+            ctx.fillStyle = "rgba(250, 204, 21, 0.18)";
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.arc(bestTarget.x, bestTarget.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(origin.x, origin.y);
+            ctx.lineTo(bestTarget.x, bestTarget.y);
+            ctx.stroke();
+
+            ctx.setLineDash([]);
+
+            drawLabel(
+              `Best: ${formatSignedTime(bestCalc.receiverTimeOnBall)}`,
+              bestTarget.x,
+              bestTarget.y - 22,
+              "#fde68a"
+            );
+
+            ctx.restore();
+          }
         }
       }
 
@@ -986,6 +1373,8 @@ export function FieldCanvas({
     }
 
     function handleMouseDown(e: MouseEvent) {
+      if (e.button !== 0) return;
+
       const point = getMousePosition(e);
 
       const player = findPlayerAtCanvasPoint(point);
@@ -997,7 +1386,10 @@ export function FieldCanvas({
       draggingPlayerRef.current = {
         id: player.id,
         offsetX: point.x - playerCanvasPoint.x,
-        offsetY: point.y - playerCanvasPoint.y
+        offsetY: point.y - playerCanvasPoint.y,
+        startX: point.x,
+        startY: point.y,
+        moved: false
       };
 
       suppressNextClickRef.current = true;
@@ -1005,6 +1397,8 @@ export function FieldCanvas({
     }
 
     function handleClick(e: MouseEvent) {
+      if (e.button !== 0) return;
+
       if (suppressNextClickRef.current) {
         suppressNextClickRef.current = false;
         return;
@@ -1020,11 +1414,30 @@ export function FieldCanvas({
 
       originRef.current = point;
       hoverRef.current = null;
+      lockedHoverRef.current = null;
 
       ringTransitionStartRef.current = performance.now();
 
       setHasOrigin(true);
       setHoverInfo(null);
+    }
+
+    function handleContextMenu(e: MouseEvent) {
+      e.preventDefault();
+
+      if (
+        !originRef.current ||
+        passIntentModeRef.current !== "through"
+      ) {
+        return;
+      }
+
+      const point = getMousePosition(e);
+
+      lockedHoverRef.current = point;
+      hoverRef.current = point;
+
+      setHoverInfo(calculateHoverPass(point));
     }
 
     function handleMouseMove(e: MouseEvent) {
@@ -1033,6 +1446,15 @@ export function FieldCanvas({
       const draggingPlayer = draggingPlayerRef.current;
 
       if (draggingPlayer) {
+        const movementDistance = Math.sqrt(
+          Math.pow(point.x - draggingPlayer.startX, 2) +
+            Math.pow(point.y - draggingPlayer.startY, 2)
+        );
+
+        if (movementDistance > 4) {
+          draggingPlayer.moved = true;
+        }
+
         const adjustedCanvasPoint = {
           x: point.x - draggingPlayer.offsetX,
           y: point.y - draggingPlayer.offsetY
@@ -1065,6 +1487,10 @@ export function FieldCanvas({
       const hoveredPlayer = findPlayerAtCanvasPoint(point);
       canvas.style.cursor = hoveredPlayer ? "grab" : "crosshair";
 
+      if (lockedHoverRef.current) {
+        return;
+      }
+
       hoverRef.current = point;
 
       const origin = originRef.current;
@@ -1077,7 +1503,22 @@ export function FieldCanvas({
     }
 
     function handleMouseUp() {
-      if (!draggingPlayerRef.current) return;
+      const draggingPlayer = draggingPlayerRef.current;
+
+      if (!draggingPlayer) return;
+
+      const player = getPlayerById(draggingPlayer.id);
+
+      if (
+        passIntentModeRef.current === "through" &&
+        player?.team === "attacker" &&
+        !draggingPlayer.moved
+      ) {
+        selectedRunnerIdRef.current =
+          selectedRunnerIdRef.current === player.id ? null : player.id;
+
+        lockedHoverRef.current = null;
+      }
 
       draggingPlayerRef.current = null;
       canvas.style.cursor = "default";
@@ -1091,13 +1532,17 @@ export function FieldCanvas({
 
     function handleMouseLeave() {
       draggingPlayerRef.current = null;
-      hoverRef.current = null;
       canvas.style.cursor = "default";
 
       window.setTimeout(() => {
         suppressNextClickRef.current = false;
       }, 0);
 
+      if (lockedHoverRef.current) {
+        return;
+      }
+
+      hoverRef.current = null;
       setHoverInfo(null);
     }
 
@@ -1110,6 +1555,7 @@ export function FieldCanvas({
     canvas.addEventListener("click", handleClick);
     canvas.addEventListener("mousemove", handleMouseMove);
     canvas.addEventListener("mouseleave", handleMouseLeave);
+    canvas.addEventListener("contextmenu", handleContextMenu);
 
     loop();
 
@@ -1121,6 +1567,7 @@ export function FieldCanvas({
       canvas.removeEventListener("click", handleClick);
       canvas.removeEventListener("mousemove", handleMouseMove);
       canvas.removeEventListener("mouseleave", handleMouseLeave);
+      canvas.removeEventListener("contextmenu", handleContextMenu);
 
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);

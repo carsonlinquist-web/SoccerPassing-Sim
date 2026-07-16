@@ -2,7 +2,7 @@ export const FIELD_W = 115;
 export const FIELD_H = 74;
 
 export const SIDE_PANEL_WIDTH = 460;
-export const TOP_BAR_HEIGHT = 88;
+export const TOP_BAR_HEIGHT = 124;
 
 export const MPH_TO_YARDS_PER_SECOND = 1760 / 3600;
 

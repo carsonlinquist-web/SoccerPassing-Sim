@@ -15,6 +15,8 @@ export type Player = {
 
 export type PassIntentMode = "open" | "through";
 
+export type AttackingDirection = "ltr" | "rtl";
+
 export type PassModelKey = "ground" | "driven" | "clipped" | "lofted";
 
 export type PassStatus = "realistic" | "too_slow" | "too_fast" | "impossible";
@@ -53,6 +55,8 @@ export type PassCalculation = {
   runnerTimeToTarget?: number;
   runnerAdvantageVsDefender?: number;
   throughBallWindow?: number;
+  throughBallValid?: boolean;
+  throughBallReason?: string;
 
   defenderCloseDownTime: number;
   defenderSpacingYards: number;
