@@ -1,10 +1,386 @@
-# Soccer Simulation Tool
+# Soccer Passing Simulator
 
-This project is a Vite + React + TypeScript app for a soccer simulation system.
+An interactive soccer coaching and analysis tool for exploring how **pass distance, speed, launch angle, field position, player movement, and defensive pressure** affect the time available to a receiver.
 
-We will build:
-- interactive soccer field (115x74 yards)
-- click-to-pass system
-- ball physics simulation
-- timing rings
-- tactical zone overlays
+The simulator combines a scaled soccer field with live passing calculations, timing rings, directional context, movable players, and pass-intent modes. It is designed as a visual decision-support tool for coaches, players, and analysts rather than as a perfect recreation of real-world ball physics.
+
+## Project Purpose
+
+Most passing tools focus only on whether a ball can travel from one point to another. This simulator also asks:
+
+* How long will the pass take to arrive?
+* How much time will the receiver have before pressure arrives?
+* Does a forward pass create less time than a backward pass?
+* Does receiving wide create more space than receiving centrally?
+* Is the selected speed and launch angle realistic for the distance?
+* How does a direct pass compare with a pass into space?
+* Which attacker and defender are most relevant to the play?
+
+The primary output is the receiver’s estimated **time on the ball before defensive pressure**.
+
+## Current Features
+
+### Full-Scale Soccer Field
+
+The simulator uses a **115 × 74-yard field** with scaled pitch markings, including:
+
+* Touchlines and goal lines
+* Halfway line
+* Center circle and center spot
+* Penalty areas
+* Six-yard boxes
+* Penalty spots
+* Penalty arcs
+* Corner arcs
+
+All pass distances and player positions are converted between canvas pixels and real-world yards.
+
+### Movable Pass Origin
+
+Click anywhere on the field to establish the starting point of the pass.
+
+The origin can be repositioned at any time, allowing passes to be evaluated from different areas of the field.
+
+### Directional Timing Rings
+
+Once an origin is selected, the simulator displays timing rings at approximately:
+
+* 20 yards
+* 40 yards
+* 60 yards
+* 80 yards
+
+The rings show the estimated receiving-time result at different distances from the ball.
+
+Unlike standard circular distance markers, the labels can account for the direction of the pass. A target 20 yards forward may therefore produce a different receiving-time result than a target 20 yards backward or toward the touchline.
+
+### Ball Speed and Launch Elevation
+
+Users can adjust:
+
+* Ball speed in miles per hour
+* Launch elevation in degrees
+
+These settings affect:
+
+* Maximum realistic pass distance
+* Ball travel time
+* Horizontal efficiency
+* Trajectory penalty
+* Pass feasibility
+* Receiver time before pressure
+
+The controls can be used to explore different passing profiles, including:
+
+* Ground passes
+* Driven passes
+* Clipped passes
+* Lofted passes
+
+### Live Pass Preview
+
+Move the pointer across the field to preview a pass from the selected origin.
+
+The preview displays information such as:
+
+* Pass distance
+* Ball travel time
+* Receiver time before pressure
+* Directional adjustment
+* Defender spacing
+* Defender close-down time
+* Pass feasibility
+* Pressure status
+
+The visual pass line changes according to whether the selected pass is considered realistic and how much pressure the receiver is expected to face.
+
+## Understanding the Main Time Value
+
+The main time value represents the estimated amount of time the receiver has available before the nearest defender applies pressure.
+
+A simplified interpretation is:
+
+* **Positive value:** the receiver has time after the ball arrives.
+* **Near zero:** the receiver and defender arrive at approximately the same time.
+* **Negative value:** pressure is expected to arrive before the pass is controlled.
+
+Ball travel time is shown separately. It is an input into the receiving calculation, not the primary result.
+
+## Directional Context
+
+The current model assumes the attacking team is moving **from left to right**.
+
+Pass direction affects the result because receiving situations are not equally difficult in every area of the field.
+
+The model can account for differences between:
+
+* Forward and backward passes
+* Central and wide receiving positions
+* Passes into congested attacking areas
+* Drop passes into supporting positions
+* Passes toward or away from pressure
+
+Backward passes generally provide more time than equivalent forward passes. Wide receiving positions may also provide more time than central positions, depending on the origin and target.
+
+Future development will allow attacking direction to change according to possession and team selection.
+
+## Optional Player Model
+
+Players can be displayed on the field and moved into different tactical positions.
+
+When players are enabled, the simulator can:
+
+* Identify the nearest attacker to a target
+* Identify the nearest defender to the receiving location
+* Measure defender spacing
+* Estimate defender reaction and close-down time
+* Draw pressure lines
+* Use player positions instead of only generalized pressure assumptions
+
+Players can be dragged around the pitch to test different formations, defensive structures, and passing situations.
+
+## Pass Intent Modes
+
+### Direct Pass
+
+Direct Pass mode evaluates a pass intended for a player’s current position.
+
+When players are enabled, the target is connected to the nearest relevant attacker. Defensive pressure is measured at that receiving location.
+
+Use this mode to evaluate passes:
+
+* Into feet
+* Between supporting players
+* Into a stationary target
+* During buildup
+* Through midfield lines
+
+### Through Ball
+
+Through Ball mode evaluates a pass into open space rather than directly to a player’s current position.
+
+The simulator:
+
+* Uses the selected field location as the pass target
+* Identifies the nearest attacker as the intended runner
+* Draws the attacker’s projected run toward the target
+* Measures defensive pressure at the target space
+* Compares ball arrival with pressure at that location
+
+Use this mode to explore:
+
+* Passes behind a defensive line
+* Runs between defenders
+* Passes into channels
+* Wide runners attacking space
+* Timing differences between passes into feet and passes into space
+
+The current through-ball model identifies the intended runner by proximity. A more advanced movement and interception model is planned for later phases.
+
+## Pass Calculation Model
+
+The simulator uses a constrained passing model rather than an unrestricted projectile formula.
+
+Its calculations consider:
+
+* Pass distance
+* Ball speed
+* Launch elevation
+* Horizontal speed efficiency
+* Maximum practical distance
+* Trajectory-based travel-time penalties
+* Receiver location
+* Attacking direction
+* Defender reaction time
+* Defender movement speed
+* Defender-to-target spacing
+
+High launch angles reduce the amount of speed directed horizontally. This prevents unrealistic results such as a slow ball launched almost vertically traveling the full length of the field.
+
+The model is intended to produce useful coaching comparisons. It should not be treated as laboratory-grade aerodynamic analysis.
+
+## Controls
+
+1. Click the field to place the ball and establish the pass origin.
+2. Adjust the ball-speed control.
+3. Adjust the launch-elevation control.
+4. Move the pointer around the field to preview possible passes.
+5. Enable players to include attacker and defender positions.
+6. Drag players into the desired tactical setup.
+7. Select Direct Pass or Through Ball mode.
+8. Click a target to evaluate or lock in the pass.
+9. Reset the simulation to begin a new scenario.
+
+## Running the Project Locally
+
+### Requirements
+
+Install:
+
+* Node.js
+* npm
+* Git
+
+A current Node.js Long-Term Support release is recommended.
+
+### Installation
+
+Clone the repository:
+
+```bash
+git clone <repository-url>
+cd <repository-folder>
+```
+
+Install the dependencies:
+
+```bash
+npm install
+```
+
+Start the development server:
+
+```bash
+npm run dev
+```
+
+Open the local address shown in the terminal. Vite commonly uses:
+
+```text
+http://localhost:5173
+```
+
+### Production Build
+
+Create a production build with:
+
+```bash
+npm run build
+```
+
+Preview the production build locally with:
+
+```bash
+npm run preview
+```
+
+## Technology
+
+The project is built with:
+
+* React
+* TypeScript
+* Vite
+* HTML Canvas
+* CSS
+
+Canvas rendering is used for the field, timing rings, players, pass paths, directional labels, pressure lines, and interactive previews.
+
+## Development Phases
+
+### Phase 1 — Passing Foundation
+
+* Scaled soccer field
+* Movable pass origin
+* Distance-based timing rings
+* Ball-speed control
+* Launch-elevation control
+* Travel-time calculations
+* Realistic distance constraints
+
+### Phase 2 — Receiver Pressure
+
+* Receiver time before pressure
+* Default defender close-down model
+* Positive and negative time results
+* Separate ball-travel and receiver-time values
+* Pressure-based visual feedback
+
+### Phase 2.5 — Directional Context
+
+* Left-to-right attacking direction
+* Forward and backward pass adjustments
+* Central and wide receiving adjustments
+* Field-position context
+
+### Phase 3 — Pass Intent and Players
+
+* Optional attackers and defenders
+* Movable player positions
+* Nearest-defender pressure
+* Direct Pass mode
+* Through Ball mode
+* Runner lines
+* Pressure measured at the through-ball target
+
+### Phase 4 — Planned Tactical Features
+
+Potential additions include:
+
+* Crossing model
+* Formation presets
+* Team and possession selection
+* Automatic attacking-direction changes
+* More advanced runner movement
+* Defender interception paths
+* Goalkeeper positioning
+* Tactical-zone influence
+* Adjustable player speed and reaction attributes
+* Pass comparison and saved scenarios
+
+### Later Development
+
+Long-term possibilities include:
+
+* Set-piece analysis
+* Corners and free kicks
+* Multiple pass sequences
+* Team transition moments
+* Coaching-session exports
+* Scenario saving
+* Data visualization
+* Distance-versus-time graphs
+* Mobile and tablet optimization
+
+## Current Limitations
+
+The simulator currently uses generalized assumptions for ball movement and defensive pressure.
+
+It does not yet fully account for:
+
+* Spin
+* Wind
+* Surface conditions
+* Ball type
+* Player acceleration
+* Player body orientation
+* First-touch quality
+* Curved runs
+* Curved passes
+* Defender anticipation
+* Interceptions before the target
+* Goalkeeper decisions
+* Changes in possession
+* Team-specific attacking direction
+
+Results should be interpreted as coaching estimates and comparative indicators rather than exact predictions.
+
+## Intended Uses
+
+The simulator can support:
+
+* Coaching demonstrations
+* Tactical discussions
+* Player decision-making exercises
+* Pass-selection comparisons
+* Training-session planning
+* Technical passing analysis
+* Defensive-spacing analysis
+* Through-ball timing discussions
+* Soccer analytics experimentation
+
+## Project Goal
+
+The long-term goal is to build a flexible soccer simulation environment that connects passing physics with tactical context.
+
+Rather than evaluating only whether a pass reaches its target, the project aims to show whether that pass gives the receiver enough time and space to make the next action.
